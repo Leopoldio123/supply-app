@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Контроль Поставок</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: var(--tg-theme-bg-color, #f5f5f5); color: var(--tg-theme-text-color, #000); }
+        .card { background-color: var(--tg-theme-secondary-bg-color, #fff); }
+    </style>
+</head>
+<body class="p-4 pb-20">
+
+    <h1 class="text-xl font-bold mb-4">📦 Поставки (Vercel)</h1>
+
+    <div class="mb-6">
+        <label class="text-xs text-gray-500 mb-1 block">Вставьте список (через Enter или запятую)</label>
+        <textarea id="bulkInput" rows="3" placeholder="Пример:&#10;Молоко 10л&#10;Кофе 1кг&#10;Стаканы" 
+                  class="w-full p-3 border rounded-lg text-black shadow-sm focus:ring-2 focus:ring-blue-500 outline-none"></textarea>
+        <button onclick="parseAndAdd()" class="mt-2 w-full bg-blue-600 text-white py-3 rounded-lg font-bold shadow hover:bg-blue-700 transition">
+            ➕ Разобрать и добавить
+        </button>
+    </div>
+
+    <div class="flex gap-2 mb-4 overflow-x-auto pb-2">
+        <button onclick="filterShow('all')" class="px-4 py-1 bg-gray-200 rounded-full text-sm font-medium hover:bg-gray-300">Все</button>
+        <button onclick="filterShow('new')" class="px-4 py-1 bg-red-100 text-red-700 rounded-full text-sm font-medium">Новые</button>
+        <button onclick="filterShow('ordered')" class="px-4 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm font-medium">В пути</button>
+    </div>
+
+    <div id="ordersList" class="space-y-3"></div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+
+        // --- БАЗА ДАННЫХ (В памяти телефона) ---
+        let orders = JSON.parse(localStorage.getItem('supply_orders')) || [];
+
+        function saveOrders() {
+            localStorage.setItem('supply_orders', JSON.stringify(orders));
+            renderOrders();
+        }
+
+        // --- ПАРСЕР (ГЛАВНАЯ ФИШКА) ---
+        function parseAndAdd() {
+            const text = document.getElementById('bulkInput').value;
+            if (!text.trim()) return;
+
+            // Магия: разбиваем текст по переносу строки (\n) ИЛИ по запятым (,)
+            const lines = text.split(/[\n,]+/);
+
+            lines.forEach(line => {
+                const cleanItem = line.trim();
+                if (cleanItem.length > 1) { // Игнорируем пустые куски
+                    orders.unshift({
+                        id: Date.now() + Math.random(), // Уникальный ID
+                        text: cleanItem,
+                        status: 'new', // new -> ordered -> received
+                        date: new Date().toLocaleTimeString()
+                    });
+                }
+            });
+
+            document.getElementById('bulkInput').value = ''; // Очистить поле
+            saveOrders();
+            tg.HapticFeedback.notificationOccurred('success'); // Вибрация в телефоне
+        }
+
+        // --- ЛОГИКА СТАТУСОВ ---
+        function updateStatus(id) {
+            const order = orders.find(o => o.id === id);
+            if (!order) return;
+
+            if (order.status === 'new') {
+                order.status = 'ordered';
+            } else if (order.status === 'ordered') {
+                if (confirm('Товар ' + order.text + ' приехал? Убираем из списка?')) {
+                    orders = orders.filter(o => o.id !== id); // Удаляем
+                }
+            }
+            saveOrders();
+        }
+
+        // --- ОТРИСОВКА ---
+        function renderOrders(filter = 'all') {
+            const container = document.getElementById('ordersList');
+            container.innerHTML = '';
+
+            if (orders.length === 0) {
+                container.innerHTML = '<div class="text-center text-gray-400 mt-10">Список пуст ✨</div>';
+                return;
+            }
+
+            orders.forEach(order => {
+                // Фильтрация (если нужно)
+                if (filter !== 'all' && order.status !== filter) return;
+
+                let statusClass = order.status === 'new' ? 'border-l-4 border-red-500' : 'border-l-4 border-yellow-400 bg-yellow-50';
+                let btnText = order.status === 'new' ? 'В заказ ➡️' : 'Принять ✅';
+                let btnClass = order.status === 'new' ? 'bg-blue-600' : 'bg-green-600';
+                let label = order.status === 'new' ? '🔴 СРОЧНО' : '🚚 ЕДЕТ';
+
+                const html = `
+                <div class="card p-4 rounded-lg shadow-sm flex justify-between items-center ${statusClass} transition-all">
+                    <div class="w-2/3">
+                        <div class="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">${label}</div>
+                        <div class="text-base font-medium leading-tight">${order.text}</div>
+                    </div>
+                    <button onclick="updateStatus(${order.id})" 
+                            class="${btnClass} text-white text-sm font-bold px-4 py-3 rounded-lg shadow active:scale-95 transition">
+                        ${btnText}
+                    </button>
+                </div>
+                `;
+                container.insertAdjacentHTML('beforeend', html);
+            });
+        }
+
+        // Запуск при старте
+        renderOrders();
+    </script>
+</body>
+</html>
