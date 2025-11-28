@@ -9,81 +9,82 @@
     <style>
         body { background-color: var(--tg-theme-bg-color, #f5f5f5); color: var(--tg-theme-text-color, #000); }
         .card { background-color: var(--tg-theme-secondary-bg-color, #fff); }
+        /* Анимация модального окна */
+        .modal-enter { opacity: 0; transform: scale(0.9); }
+        .modal-enter-active { opacity: 1; transform: scale(1); transition: all 0.2s; }
+        .modal-exit { opacity: 0; transform: scale(0.9); transition: all 0.2s; }
     </style>
 </head>
-<body class="p-4 pb-20">
+<body class="p-4 pb-20 select-none">
 
     <h1 class="text-xl font-bold mb-4">📦 Управление заявками</h1>
 
     <div class="mb-6 bg-white p-3 rounded-lg shadow-sm">
-        <label class="text-xs text-gray-500 mb-1 block">Вставьте сообщение из TWA:</label>
-        <textarea id="bulkInput" rows="2" placeholder="Вставьте сюда весь текст с 📦 и 🛒..." 
+        <textarea id="bulkInput" rows="1" placeholder="Вставьте список..." 
                   class="w-full p-2 border border-gray-200 rounded text-sm text-black focus:ring-2 focus:ring-blue-500 outline-none"></textarea>
         <button onclick="parseAndAdd()" class="mt-2 w-full bg-blue-600 text-white py-3 rounded-lg font-bold shadow hover:bg-blue-700 transition flex justify-center items-center gap-2">
-            <span>⚡️ Разобрать список</span>
+            <span>⚡️ Добавить список</span>
         </button>
     </div>
 
     <div class="flex gap-2 mb-4 overflow-x-auto pb-2 scrollbar-hide">
         <button onclick="filterShow('all')" class="px-4 py-1.5 bg-gray-200 rounded-lg text-sm font-medium whitespace-nowrap">Все</button>
         <button onclick="filterShow('new')" class="px-4 py-1.5 bg-red-100 text-red-700 rounded-lg text-sm font-medium whitespace-nowrap">🔴 Новые</button>
-        <button onclick="filterShow('ordered')" class="px-4 py-1.5 bg-yellow-100 text-yellow-700 rounded-lg text-sm font-medium whitespace-nowrap">🟡 Заказано</button>
+        <button onclick="filterShow('ordered')" class="px-4 py-1.5 bg-yellow-100 text-yellow-700 rounded-lg text-sm font-medium whitespace-nowrap">🟡 В пути</button>
     </div>
 
     <div id="ordersList" class="space-y-3"></div>
+
+    <div id="confirmModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl p-6 w-10/12 max-w-sm shadow-2xl transform transition-all">
+            <h3 id="modalTitle" class="text-lg font-bold mb-2">Подтверждение</h3>
+            <p id="modalText" class="text-gray-600 mb-6">Вы уверены?</p>
+            <div class="flex gap-3">
+                <button onclick="closeModal()" class="flex-1 py-3 bg-gray-200 rounded-lg font-medium">Нет</button>
+                <button id="modalConfirmBtn" class="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold">Да</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
 
         // --- БАЗА ДАННЫХ ---
-        let orders = JSON.parse(localStorage.getItem('supply_orders_v2')) || [];
+        let orders = JSON.parse(localStorage.getItem('supply_orders_v3')) || [];
         let currentFilter = 'all';
 
         function saveOrders() {
-            localStorage.setItem('supply_orders_v2', JSON.stringify(orders));
+            localStorage.setItem('supply_orders_v3', JSON.stringify(orders));
             renderOrders(currentFilter);
         }
 
-        // --- НОВЫЙ УМНЫЙ ПАРСЕР ---
+        // --- ПАРСЕР ---
         function parseAndAdd() {
             const text = document.getElementById('bulkInput').value;
             if (!text.trim()) return;
 
-            // 1. Разбиваем текст не по строкам, а по значку коробки 📦
-            // Это позволяет сгруппировать 3-4 строки в один товар
             const rawBlocks = text.split('📦');
-
             let addedCount = 0;
 
             rawBlocks.forEach(block => {
                 if (!block.trim()) return;
-
-                // Разбиваем блок на строки
                 const lines = block.split('\n').map(l => l.trim()).filter(l => l);
-                
-                // Первая строка после 📦 - это обычно название
                 let itemName = lines[0]; 
-
-                // Ищем строку, где есть слово "КУПИТЬ" или значок 🛒
-                let quantity = "1 шт"; // Значение по умолчанию
+                let quantity = "1 шт"; 
                 const buyLine = lines.find(l => l.toUpperCase().includes('КУПИТЬ') || l.includes('🛒'));
+                if (buyLine) quantity = buyLine.replace(/.*КУПИТЬ:?/i, '').replace('🛒', '').trim();
 
-                if (buyLine) {
-                    // Удаляем лишние слова, оставляем только цифры и ед. измерения
-                    // Пример: "🛒 КУПИТЬ: 3.0 шт" -> "3.0 шт"
-                    quantity = buyLine.replace(/.*КУПИТЬ:?/i, '').replace('🛒', '').trim();
-                }
-
-                // Если имя слишком короткое (глюк), пропускаем
                 if (itemName.length < 2) return;
 
                 orders.unshift({
                     id: Date.now() + Math.random(),
                     text: itemName,
-                    qty: quantity, // Сохраняем количество отдельно
+                    qty: quantity, 
                     status: 'new',
-                    date: new Date().toLocaleTimeString().slice(0, 5)
+                    // Важно: сохраняем точное время создания для отслеживания 7 дней
+                    createdAt: Date.now(), 
+                    displayDate: new Date().toLocaleDateString()
                 });
                 addedCount++;
             });
@@ -92,37 +93,65 @@
                 document.getElementById('bulkInput').value = '';
                 saveOrders();
                 tg.HapticFeedback.notificationOccurred('success');
-                alert(`Добавлено товаров: ${addedCount}`);
-            } else {
-                alert('Не удалось найти товары. Проверьте, есть ли значки 📦 в тексте.');
             }
         }
 
-        // --- ЛОГИКА ---
-        function updateStatus(id) {
+        // --- ЛОГИКА ДЕЙСТВИЙ ---
+
+        // 1. Удаление (Корзина)
+        function deleteItem(id) {
+            showModal('Удалить этот товар?', 'Это действие нельзя отменить.', () => {
+                orders = orders.filter(o => o.id !== id);
+                saveOrders();
+            });
+        }
+
+        // 2. Смена статуса
+        function nextStatus(id) {
             const order = orders.find(o => o.id === id);
             if (!order) return;
 
             if (order.status === 'new') {
                 order.status = 'ordered';
+                // Обновляем дату, чтобы считать 7 дней именно с момента ЗАКАЗА
+                order.createdAt = Date.now(); 
+                order.displayDate = new Date().toLocaleDateString();
+                saveOrders();
             } else if (order.status === 'ordered') {
-                if (confirm(`Товар "${order.text}" приехал? Убрать из списка?`)) {
-                    orders = orders.filter(o => o.id !== id);
-                }
+                showModal('Товар получен?', 'Заказ будет удален из списка ожидаемых.', () => {
+                    orders = orders.filter(o => o.id !== id); // Удаляем, так как выполнен
+                    saveOrders();
+                    tg.HapticFeedback.notificationOccurred('success');
+                });
             }
-            saveOrders();
         }
 
-        function filterShow(status) {
-            currentFilter = status;
-            renderOrders(status);
+        // --- МОДАЛЬНОЕ ОКНО (Замена системному confirm) ---
+        let currentConfirmAction = null;
+
+        function showModal(title, text, onConfirm) {
+            document.getElementById('modalTitle').innerText = title;
+            document.getElementById('modalText').innerText = text;
+            currentConfirmAction = onConfirm;
+            document.getElementById('confirmModal').classList.remove('hidden');
         }
 
-        // --- ОТРИСОВКА ---
+        function closeModal() {
+            document.getElementById('confirmModal').classList.add('hidden');
+            currentConfirmAction = null;
+        }
+
+        document.getElementById('modalConfirmBtn').onclick = () => {
+            if (currentConfirmAction) currentConfirmAction();
+            closeModal();
+        };
+
+        // --- ОТРИСОВКА И ЛОГИКА 7 ДНЕЙ ---
         function renderOrders(filter) {
             const container = document.getElementById('ordersList');
             container.innerHTML = '';
-
+            
+            // Сортировка: Сначала просроченные, потом новые
             const filteredOrders = orders.filter(o => filter === 'all' ? true : o.status === filter);
 
             if (filteredOrders.length === 0) {
@@ -130,26 +159,58 @@
                 return;
             }
 
+            const NOW = Date.now();
+            const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+            // Для теста можно поставить 1 минуту: 60 * 1000
+            
             filteredOrders.forEach(order => {
-                let statusColor = order.status === 'new' ? 'border-red-500 bg-white' : 'border-yellow-400 bg-yellow-50';
-                let btnText = order.status === 'new' ? 'Заказать' : 'Принять';
-                let btnColor = order.status === 'new' ? 'bg-blue-600' : 'bg-green-600';
+                let statusColor = '';
+                let btnText = '';
+                let btnColor = '';
+                let alertHtml = '';
+
+                // Проверка на просрочку (только для заказанных)
+                const isOverdue = (order.status === 'ordered' && (NOW - order.createdAt > SEVEN_DAYS_MS));
+
+                if (order.status === 'new') {
+                    statusColor = 'border-red-500 bg-white';
+                    btnText = 'Заказать';
+                    btnColor = 'bg-blue-600';
+                } else {
+                    // Ordered
+                    statusColor = 'border-yellow-400 bg-yellow-50';
+                    btnText = 'Принять';
+                    btnColor = 'bg-green-600';
+                    
+                    if (isOverdue) {
+                        statusColor = 'border-red-600 bg-red-50'; // Красный фон тревоги
+                        alertHtml = `<div class="text-red-600 text-xs font-bold mt-1">⚠️ ЗАДЕРЖКА БОЛЕЕ 7 ДНЕЙ!</div>`;
+                    }
+                }
                 
-                // Красивое отображение количества
                 let qtyBadge = `<span class="bg-gray-100 text-gray-800 text-xs font-bold px-2 py-1 rounded border border-gray-300 whitespace-nowrap">${order.qty}</span>`;
 
                 const html = `
-                <div class="card p-3 rounded-lg shadow-sm border-l-4 ${statusColor} flex flex-col gap-2 mb-3">
-                    <div class="flex justify-between items-start">
+                <div class="card p-3 rounded-lg shadow-sm border-l-4 ${statusColor} mb-3 relative">
+                    <button onclick="deleteItem(${order.id})" class="absolute top-2 right-2 text-gray-300 hover:text-red-500 p-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                    </button>
+
+                    <div class="flex justify-between items-start w-11/12">
                         <div class="font-medium text-base leading-tight pr-2">
                             ${order.text}
+                            ${alertHtml}
                         </div>
-                        ${qtyBadge}
                     </div>
                     
-                    <div class="flex justify-between items-center mt-1">
-                        <span class="text-xs text-gray-400">${order.date}</span>
-                        <button onclick="updateStatus(${order.id})" 
+                    <div class="flex justify-between items-end mt-3">
+                        <div class="flex flex-col gap-1">
+                            ${qtyBadge}
+                            <span class="text-[10px] text-gray-400">от ${order.displayDate}</span>
+                        </div>
+                        <button onclick="nextStatus(${order.id})" 
                                 class="${btnColor} text-white text-xs font-bold px-4 py-2 rounded-lg shadow active:scale-95 transition">
                             ${btnText}
                         </button>
